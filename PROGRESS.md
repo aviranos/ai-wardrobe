@@ -2,13 +2,14 @@
 
 ## Current phase
 
-**Phase 1 — Scaffold**, per SPEC.md §11. Implementation complete, pending
-your personal run/confirm before the final commit (per our working
-agreement in `CLAUDE.md`).
+**Phase 1 — Scaffold**, per SPEC.md §11. Completed.
+
+- Commit: `980bb533d684268b3fd19f7938efc74ce5b0fc4f`
+- Pushed successfully to `origin/master`.
 
 ## Completed
 
-- Git repository initialized (not yet committed — see "Next step").
+- Git repository initialized and committed.
 - `backend/`: FastAPI app, `pydantic-settings`-based config, SQLite
   connection helper, `GET /api/health` (returns status, app version,
   DB connectivity). CORS restricted to `http://localhost:5173`.
@@ -25,10 +26,9 @@ agreement in `CLAUDE.md`).
 
 ## Next step
 
-You run the app locally yourself (see README.md), confirm the health screen
-works, then approve the commit. Once committed, Phase 2 ("Slice without AI"
-— Add Item upload, file storage, `items` table, gallery showing raw images)
-is planned and executed the same way: plan → approval → small steps.
+Phase 2 planning ("Slice without AI" — Add Item upload, file storage,
+`items` table, gallery showing raw images), same process as before:
+plan → approval → small steps.
 
 ## Known limitations (expected at this phase, not bugs)
 

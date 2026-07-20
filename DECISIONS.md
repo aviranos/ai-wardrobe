@@ -42,3 +42,10 @@ optional `VITE_API_BASE_URL` if ever needed, but no `.env` file is required
 to run Phase 1.
 *Rationale:* avoids a second env-file convention for a value that has one
 sane default during local-only development.
+
+### Deployment timing
+
+Deployment is deferred until the core upload and AI catalog flow works.
+During development, mobile testing may use the home network. A private
+server deployment may be added after M1 and before the public-product
+milestone M7.
