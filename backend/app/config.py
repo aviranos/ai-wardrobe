@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     image_model: str = "gemini-3.1-flash-image"
     text_model: str = "gemini-2.5-flash"
     database_path: Path = PROJECT_ROOT / "data" / "wardrobe.db"
+    originals_dir: Path = PROJECT_ROOT / "data" / "originals"
+    catalog_dir: Path = PROJECT_ROOT / "data" / "catalog"
+    max_upload_bytes: int = 10 * 1024 * 1024
 
 
 settings = Settings()

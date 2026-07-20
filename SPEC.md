@@ -56,6 +56,10 @@ doesn't need a redesign later.
    mobile browsers), card grid gallery, modal/page for item details.
 8. **UI language:** English for v0.1. Structure components so RTL/Hebrew can be
    added later without rework (no hardcoded directional CSS where avoidable).
+9. **Visual direction:** warm, elegant, classic, premium — like a restrained
+   fashion boutique. Warm off-white/beige tones around `#F2EDE4`, generous
+   whitespace, serif headings, clean sans-serif UI text. Luxury through
+   restraint, not decoration (DECISIONS.md D17).
 
 ## 4. Scope
 
@@ -76,21 +80,47 @@ in-process is fine) · n8n · social features · subscriptions.
 
 ### 5.1 Add Item
 1. User clicks **Add New Item**
-2. Uploads front image (file picker / camera); optionally adds back image
-3. System automatically runs the AI pipeline on each image:
+2. Uploads front image (file picker / camera) — required. System then asks
+   whether to add an optional back image; the back image is never mandatory
+   (DECISIONS.md D22).
+3. *(Phase 3+)* System automatically runs the AI pipeline on each image:
    a. Product-shot generation → catalog image
    b. Classification (front image only) → suggested name, category, subtype, colors, style tags
-4. Review form opens pre-filled; user edits/completes fields
-5. Save → item appears in gallery (processed front image as card)
+4. Review form opens. **Phase 2 (no AI):** a minimal Review step with
+   exactly Name, Category, Type, Color, pre-filled with usable defaults so
+   the user can save quickly — never a placeholder like "Untitled 001"
+   (DECISIONS.md D19, D23). Category shows friendly plural labels ("Tops",
+   "Bottoms", ...), never the raw `top`/`bottom` enum values (D29). Type
+   is optional, maps to the `subtype` column, and its options depend on
+   the chosen Category (D29) — e.g. picking "Bottoms" offers "Jeans,
+   Trousers, Shorts, ...". Remaining metadata (brand, style tags,
+   condition, notes) stays in the schema (§6) but isn't part of this
+   screen yet — deferred to a future "More details" section or the item
+   details page (D29). **Phase 3+:** AI suggests values for Name,
+   Category, and Color; the user still approves before saving (§3,
+   principle 3).
+5. Save → item appears in gallery (front image as card, DECISIONS.md D24)
 
-### 5.2 Gallery
-Category tabs rendered from the taxonomy config (All + categories; hide empty ones) · item count
-("N pieces") · responsive card grid of processed front images · click card → item page.
+### 5.2 Gallery ("My Wardrobe")
+Home screen title "My Wardrobe"; shows a minimal item count and category
+count only — no dashboards, charts, or recommendations (DECISIONS.md D20).
+"Add New Item" button near the top at all times, plus a larger CTA in the
+empty state (D21). Responsive card grid, 4 columns desktop / 2 columns
+mobile (D25) · each card shows front image, name, and category only (D24)
+· click card → item page. Empty state: title "Your wardrobe starts here",
+text "Add your first piece and begin building your digital closet." (D26).
+Category tabs rendered from the taxonomy config (All + categories; hide
+empty ones) are part of the v0.1 vision but explicitly *not* built in
+Phase 2 — a plain grid only, no filtering yet (DECISIONS.md, Phase 2
+corrections).
 
 ### 5.3 Item details
-Front + back catalog images (front primary; back shown only here, not in gallery) ·
-all metadata · Edit · Regenerate catalog image (explicit, confirmed action — it
-costs money) · Retry on failure · Delete (removes files too).
+Front + back catalog images (front primary; back shown only here, not in
+gallery) · all metadata · Edit · Regenerate catalog image (explicit,
+confirmed action — it costs money) · Retry on failure. Delete (confirmation
+required; removes both the DB record and stored image files) is available
+starting Phase 2 directly from the gallery card, ahead of this page — see
+§11's Phase 2/4 split (DECISIONS.md D27).
 
 ## 6. Data model (SQLite)
 
@@ -101,7 +131,9 @@ items (
   source_hash_back TEXT,
   name TEXT NOT NULL,                  -- AI-suggested, user-editable
   category TEXT NOT NULL,              -- top | bottom | outerwear | dress | one_piece | shoes | accessory
-  subtype TEXT,                        -- e.g. "t-shirt", "jeans"
+  subtype TEXT,                        -- "Type" in the UI; e.g. "T-shirt", "Jeans" — user-picked
+                                        -- from a Category-dependent list from Phase 2 on (D29);
+                                        -- AI may suggest it too from Phase 3
   colors TEXT NOT NULL,                -- JSON array, e.g. ["navy","white"]
   style_tags TEXT,                     -- JSON array (optional, AI-suggested)
   brand TEXT,                          -- optional; AI suggests if a logo is visible
@@ -123,6 +155,12 @@ items (
 ```
 
 Folder layout: `data/originals/`, `data/catalog/` (never expose `originals` via the UI).
+
+Phase 2 (no AI yet) populates `name`, `category`, `subtype` (optional),
+`colors` (single-entry array) and the image path/status columns directly
+from the user's minimal Review step (§5.1, DECISIONS.md D23, D29); the
+remaining columns stay `NULL` until Phase 3 fills them from the AI
+pipeline.
 
 ## 7. Decisions log (already made — do not reopen)
 
@@ -182,7 +220,7 @@ Analyze the clothing item in this image. Return ONLY valid JSON, no markdown:
 
 | Method | Route | Purpose |
 |--------|-------|---------|
-| POST | `/api/items` | multipart: front (required) + back (optional) → creates item, triggers pipeline, returns id |
+| POST | `/api/items` | multipart: front (required) + back (optional) → creates item, triggers pipeline (Phase 3+; Phase 2 stores files + minimal metadata only), returns id |
 | GET | `/api/items?category=` | gallery list (processed images + key metadata) |
 | GET | `/api/items/{id}` | full item |
 | PATCH | `/api/items/{id}` | edit metadata |
@@ -208,9 +246,9 @@ Static serving for `data/catalog/` images.
 | Phase | Deliverable | Done when |
 |-------|-------------|-----------|
 | 1 — Scaffold | Repo structure, FastAPI + React/Vite + SQLite, `/api/health`, frontend shows API connected, CLAUDE.md, PROGRESS.md, README, .env.example, 1 backend test | Runs with two commands |
-| 2 — Slice without AI | Add Item (front+back upload) → files saved → DB record → gallery shows raw image temporarily | Uploaded item visible after refresh |
+| 2 — Slice without AI | Add Item (front+back upload) → files saved → DB record → minimal Review (name/category/color) → gallery shows raw image → delete with confirmation | Uploaded item visible after refresh; item can be deleted (DB record + files both removed) |
 | 3 — AI pipeline | Catalog image + classification on upload; statuses; review form pre-filled; gallery switches to processed images | Real garment in → clean classified card out |
-| 4 — Item page & editing | Details page, edit form, retry, regenerate (confirmed), delete | Full CRUD on a real item |
+| 4 — Item page & editing | Details page, edit form, retry, regenerate (confirmed) | Full metadata editing on a real item |
 | 5 — Polish & real data | 5+ real garments loaded, empty/error states, visual polish per §3 | Owner proudly demos it |
 
 ## 12. Product roadmap (milestones beyond v0.1 — context only, do NOT build)

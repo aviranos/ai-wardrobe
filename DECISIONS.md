@@ -49,3 +49,153 @@ Deployment is deferred until the core upload and AI catalog flow works.
 During development, mobile testing may use the home network. A private
 server deployment may be added after M1 and before the public-product
 milestone M7.
+
+## Phase 2
+
+Product decisions approved by the product owner before Phase 2 planning
+began. SPEC.md is updated in the places these change actual product
+behavior (§3, §5, §9, §11); this log keeps the rationale.
+
+**D17 — Visual direction.** Warm, elegant, classic, premium — like a
+restrained fashion boutique. Warm off-white/beige tones around `#F2EDE4`,
+generous whitespace, serif headings, clean sans-serif UI text.
+*Rationale:* luxury reads through restraint, not decoration; also keeps the
+UI palette consistent with the catalog-image background already specified
+in SPEC.md §8.1.
+
+**D18 — Gallery presentation.** The wardrobe gallery should feel like a
+premium fashion e-commerce catalog: images are the main focus, cards stay
+visually quiet and uncluttered.
+*Rationale:* the catalog is the product's core asset (SPEC.md D1); it
+should look like one from day one, even before AI-processed images exist.
+
+**D19 — Fast intake first.** The first digitization flow prioritizes speed.
+Full metadata enrichment can happen later; users should be able to add many
+garments without completing a long form each time.
+*Rationale:* the fastest path to a populated, testable wardrobe is a short
+add-item loop, consistent with SPEC.md §3.1's 60-second target.
+
+**D20 — Home screen.** Title "My Wardrobe". Shows a minimal item count, a
+minimal category count, and the wardrobe gallery. No dashboards, charts,
+recommendations, or complex navigation in Phase 2.
+*Rationale:* Phase 2 is a vertical slice, not the analytics-rich M2/M4
+product; keep the home screen legible and simple.
+
+**D21 — Add item entry points.** One clear "Add New Item" button near the
+top of the home screen, plus one larger call-to-action in the empty state.
+*Rationale:* two entry points cover both the populated-gallery case and the
+first-run case without adding navigation complexity.
+
+**D22 — Photo flow.** Front photo uploads first; afterward the user is
+asked whether to add an optional back photo. The back photo is never
+mandatory.
+*Rationale:* matches SPEC.md §6 (`original_back_path` is nullable) and
+keeps the fast-intake loop (D19) from being blocked by an optional step.
+
+**D23 — Minimal review screen.** After photo upload, the Review step shows
+exactly Name, Category, Color, each with a usable default so the user can
+save quickly. Never create items named e.g. "Untitled 001". In Phase 3, AI
+may suggest values for these same three fields.
+*Rationale:* full metadata (subtype, brand, style tags, condition, notes —
+SPEC.md §6) stays available in the schema but isn't part of the Phase 2 UI;
+this is what "no long form per item" (D19) means concretely.
+*Final defaults (approved after technical review):* Name starts as "New
+Item"; once a category is picked, it becomes "New {Category}" (e.g. "New
+Top", "New Shoes") — but only if the user hasn't already edited the name
+by hand. Category has no fake default; the user must pick one of the seven
+approved values before Save is enabled — a guessed category would be
+actively misleading (a shoe defaulted to "top" reads as a bug, not a
+convenience). Color defaults to the literal text "Not specified" and stays
+editable.
+
+**D24 — Gallery card.** Each card shows front image, garment name, and
+category only — not all metadata.
+*Rationale:* keeps cards quiet per D18; matches SPEC.md §5.2's original
+"processed images + key metadata" intent, scoped down for Phase 2's
+non-AI images.
+
+**D25 — Responsive grid.** 4 columns on desktop, 2 columns on mobile.
+*Rationale:* simple, standard catalog breakpoints; no need for a
+configurable grid at this stage.
+
+**D26 — Empty state copy.** Title "Your wardrobe starts here"; text "Add
+your first piece and begin building your digital closet."; includes a clear
+add-item call-to-action.
+*Rationale:* approved copy, paired with D21's larger empty-state CTA.
+
+**D27 — Delete item.** Phase 2 includes item deletion, gated by a
+confirmation step. Deleting removes both the database record and its
+stored image files.
+*Rationale:* moved forward from SPEC.md §11's original Phase 4 ("Item page
+& editing"), since a fast-intake flow (D19) needs a way to remove mistakes
+without waiting two more phases. This is a scope correction to the Phase
+table, applied in SPEC.md §11 — Phase 4 keeps edit/retry/regenerate, not
+delete.
+
+**D28 — Naming.** Keep the product name "AI Wardrobe" and the main page
+title "My Wardrobe" (see D20). No branding or renaming exercise.
+*Rationale:* explicit confirmation to close off any naming ambiguity before
+Phase 2 UI work starts.
+
+### Phase 2 implementation corrections (technical review)
+
+Before implementation, ChatGPT and the Technical Lead reviewed the Phase 2
+plan and required these corrections to what was originally proposed:
+
+- **Full schema now, not a trimmed one.** Every column from SPEC.md §6
+  exists in the `items` table from the start (not just the columns Phase 2
+  writes to), so Phase 3 never needs a schema migration to add AI-suggested
+  fields — it just starts writing to columns that already exist. Phase 2
+  populates only `id`, `source_hash_front`, `source_hash_back`, `name`,
+  `category`, `colors`, `original_front_path`, `original_back_path`;
+  everything else is `NULL` or its declared default. Still no migration
+  framework (Alembic etc.) — one table, `CREATE TABLE IF NOT EXISTS` is
+  enough.
+- **Duplicate protection uses SPEC's own idempotency design**, not a
+  frontend-generated `submission_id`: SHA256 of the actual front-image
+  bytes, stored in `source_hash_front` (`UNIQUE`), checked before insert
+  and backstopped by catching `sqlite3.IntegrityError` for the race case.
+  A duplicate upload returns the existing item with `duplicate: true`
+  rather than erroring or silently creating a second row. Documented
+  limitation: two different physical garments photographed identically
+  (same bytes) would incorrectly be treated as the same item — accepted
+  for Phase 2.
+- **`GET /api/status` was cut from Phase 2.** Item and category counts for
+  the "My Wardrobe" header are computed client-side from `GET /api/items`.
+  A real pipeline-status endpoint (pending/processing/failed) belongs in
+  Phase 3, once those states exist.
+- **Category tabs are not built in Phase 2** even though SPEC.md §5.2
+  describes them as part of the eventual v0.1 gallery — plain responsive
+  grid only.
+- Create/delete consistency rules (validate → write → insert, roll back
+  written files on any failure; delete DB row → best-effort file removal,
+  missing-file counts as success, genuine failures reported not hidden)
+  were confirmed as proposed, not changed.
+
+**D29 — Category/Type usability correction.** After hands-on testing, the
+raw `category` enum values (`top`, `bottom`, `one_piece`, ...) were found
+too broad and too technical to show directly to the user. Approved fix,
+applied before Phase 2 was closed:
+- The seven-value `category` enum (SPEC.md §6/D12) is unchanged — it's
+  still the data model's broad grouping.
+- Category is now shown with friendly plural labels in the UI: Tops,
+  Bottoms, Outerwear, Dresses, One-piece, Shoes, Accessories. Raw
+  snake_case values are never shown to the user.
+- A new optional **Type** field was added to the Review screen, mapped to
+  the existing (previously unused-by-the-UI) `subtype` column. Its options
+  depend on the chosen Category — e.g. Category "Bottoms" offers Jeans,
+  Trousers, Shorts, Bermuda shorts, Skirt, Leggings, Other. Each category's
+  list ends with "Other" as an escape hatch. Leaving Type unset is valid
+  (stored as `NULL`); Category still has no fake default and must be
+  explicitly chosen.
+- Review screen order is now Name, Category, Type, Color.
+- Extended metadata (fabric/material, style, brand, size, purchase source,
+  purchase date, condition, notes) remains deferred — SPEC.md §6 already
+  has columns for several of these, but no UI for them ships in Phase 2.
+  They're earmarked for a future "More details" section or the Phase 4
+  item details page, keeping the fast-intake principle (D19) intact: this
+  correction adds one optional field to the form, not a longer one.
+*Rationale:* the data model's broad categories are right for filtering and
+future stylist logic, but a user adding "jeans" shouldn't have to think in
+terms of "bottom" — Type gives them a familiar, specific label while the
+underlying `category` stays simple and stable.
