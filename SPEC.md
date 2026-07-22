@@ -124,17 +124,22 @@ starting Phase 2 directly from the gallery card, ahead of this page — see
 
 ## 6. Data model (SQLite)
 
+### 6.1 Phase 2 schema (shipped)
+
 ```sql
 items (
   id TEXT PRIMARY KEY,                 -- uuid
   source_hash_front TEXT UNIQUE,       -- SHA256 of original front upload (idempotency)
   source_hash_back TEXT,
-  name TEXT NOT NULL,                  -- AI-suggested, user-editable
-  category TEXT NOT NULL,              -- top | bottom | outerwear | dress | one_piece | shoes | accessory
+  name TEXT NOT NULL,                  -- AI-suggested (Phase 3+), user-editable; no SQL default —
+                                        -- server always supplies an explicit value on insert (D30)
+  category TEXT NOT NULL,              -- top | bottom | outerwear | dress | one_piece | shoes | accessory;
+                                        -- no SQL default — server always supplies an explicit value (D30)
   subtype TEXT,                        -- "Type" in the UI; e.g. "T-shirt", "Jeans" — user-picked
                                         -- from a Category-dependent list from Phase 2 on (D29);
                                         -- AI may suggest it too from Phase 3
-  colors TEXT NOT NULL,                -- JSON array, e.g. ["navy","white"]
+  colors TEXT NOT NULL,                -- JSON array, e.g. ["navy","white"]; no SQL default —
+                                        -- server always supplies an explicit value on insert (D30)
   style_tags TEXT,                     -- JSON array (optional, AI-suggested)
   brand TEXT,                          -- optional; AI suggests if a logo is visible
   size TEXT,                           -- optional, manual
@@ -147,20 +152,73 @@ items (
   original_back_path TEXT,
   catalog_front_path TEXT,
   catalog_back_path TEXT,
-  status_catalog TEXT DEFAULT 'pending',  -- pending | processing | done | failed
-  error_msg TEXT,
+  status_catalog TEXT DEFAULT 'pending',  -- LEGACY (D30): shipped in Phase 2, superseded by the
+                                           -- Phase 3 per-stage status columns (§6.2). Not the source
+                                           -- of truth for Phase 3 processing state. Kept in place for
+                                           -- backward compatibility — not dropped, not rebuilt.
+  error_msg TEXT,                         -- LEGACY (D30): superseded by the Phase 3 per-stage error
+                                           -- columns (§6.2). Kept for backward compatibility.
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 ```
 
 Folder layout: `data/originals/`, `data/catalog/` (never expose `originals` via the UI).
+Original uploads are retained internally, unchanged from D2 — no automatic deletion of
+originals. A Phase 3 `original_delete_at` retention-timestamp column was proposed and is
+**not approved** (D30); it does not exist in this schema and is not planned.
 
 Phase 2 (no AI yet) populates `name`, `category`, `subtype` (optional),
 `colors` (single-entry array) and the image path/status columns directly
 from the user's minimal Review step (§5.1, DECISIONS.md D23, D29); the
 remaining columns stay `NULL` until Phase 3 fills them from the AI
 pipeline.
+
+### 6.2 Phase 3 schema additions (additive — not yet applied)
+
+Phase 3 adds processing-state tracking via `ALTER TABLE ... ADD COLUMN` only. The
+existing Phase 2 table (§6.1) is not dropped or rebuilt, and its legacy
+`status_catalog`/`error_msg` columns remain in place unchanged. **These statements are
+documentation of the planned migration; they are not run as part of this change.**
+
+```sql
+ALTER TABLE items ADD COLUMN front_catalog_status TEXT DEFAULT 'pending';   -- pending | processing | done | failed
+ALTER TABLE items ADD COLUMN front_catalog_error TEXT;
+ALTER TABLE items ADD COLUMN front_catalog_attempts INTEGER DEFAULT 0;
+ALTER TABLE items ADD COLUMN front_catalog_updated_at TIMESTAMP;
+
+ALTER TABLE items ADD COLUMN back_catalog_status TEXT DEFAULT 'pending';    -- pending | processing | done | failed
+ALTER TABLE items ADD COLUMN back_catalog_error TEXT;
+ALTER TABLE items ADD COLUMN back_catalog_attempts INTEGER DEFAULT 0;
+ALTER TABLE items ADD COLUMN back_catalog_updated_at TIMESTAMP;
+
+ALTER TABLE items ADD COLUMN metadata_status TEXT DEFAULT 'pending';        -- pending | processing | done | failed
+ALTER TABLE items ADD COLUMN metadata_error TEXT;
+ALTER TABLE items ADD COLUMN metadata_attempts INTEGER DEFAULT 0;
+ALTER TABLE items ADD COLUMN metadata_updated_at TIMESTAMP;
+
+ALTER TABLE items ADD COLUMN review_status TEXT DEFAULT 'pending';          -- pending | approved
+ALTER TABLE items ADD COLUMN overall_status TEXT DEFAULT 'pending';         -- server-maintained projection, see below
+```
+
+Each of the three processing pipelines — front catalog image, back catalog image, and
+metadata classification (§8) — is a separate, independently-retryable AI call, so each
+gets its own `status` / `error` / `attempts` / `updated_at` quartet rather than sharing
+one column.
+
+**`overall_status`** is a server-maintained projection, not an independent source of
+truth. It is **not directly writable** through a normal `PATCH /api/items/{id}` call —
+the server recomputes it whenever a contributing column changes, in this order:
+
+1. `review_status = approved` → `overall_status = ready`
+2. `front_catalog_status = failed` → `overall_status = failed`
+3. `front_catalog_status = done` → `overall_status = needs_review`, even if
+   `metadata_status` failed
+4. Otherwise `overall_status` is `pending` or `processing`
+
+**Approval invariant:** an item cannot be approved (`review_status = approved`) until
+`front_catalog_status = done`. A failed or incomplete back-image or metadata step does
+not block approval — this is what rule 3 above encodes.
 
 ## 7. Decisions log (already made — do not reopen)
 

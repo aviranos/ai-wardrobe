@@ -199,3 +199,61 @@ applied before Phase 2 was closed:
 future stylist logic, but a user adding "jeans" shouldn't have to think in
 terms of "bottom" — Type gives them a familiar, specific label while the
 underlying `category` stays simple and stable.
+
+## Phase 3 (planning)
+
+Schema and processing-state decisions approved ahead of Phase 3 implementation.
+No Phase 3 code exists yet — this section documents design only.
+
+**D30 — Phase 3 schema boundary, legacy fields, explicit placeholders, multi-column
+processing status, `overall_status` projection, approval invariant, and
+`original_delete_at` rejection.**
+
+- **Schema boundary.** The Phase 2 `items` table (SPEC.md §6.1) is not dropped or
+  rebuilt for Phase 3. Phase 3 changes (§6.2) are additive `ALTER TABLE ... ADD COLUMN`
+  statements only, applied to the existing table.
+  *Rationale:* one table, no migration framework (per the Phase 2 correction, above);
+  additive changes carry no data-loss risk and keep existing Phase 2 rows valid.
+
+- **Legacy fields kept, not removed.** `status_catalog` and `error_msg` (shipped in
+  Phase 2) stay in the table, marked deprecated/legacy in SPEC.md §6.1. They are
+  superseded by the Phase 3 per-stage status/error columns (§6.2) and are not the
+  source of truth for Phase 3 processing state.
+  *Rationale:* backward compatibility; no reason to force a destructive rebuild of a
+  single-table SQLite DB to remove two now-unused columns.
+
+- **Explicit server-side placeholders, not SQL defaults.** `name`, `category`, and
+  `colors` remain `NOT NULL` with no SQL-level `DEFAULT`. Phase 3's server-side insert
+  logic must always supply explicit values when AI classification hasn't run yet or has
+  failed: `name = "Untitled item"`, `category = "uncategorized"`, `colors = "[]"`.
+  *Rationale:* keeps "what value did this column get and why" visible in application
+  code, not hidden in schema DDL — consistent with Phase 2's D23 approach of
+  application-level, not SQL-level, defaults.
+
+- **Multi-column processing status.** Front catalog image, back catalog image, and
+  metadata classification (§8) are each tracked with their own independent
+  `status`/`error`/`attempts`/`updated_at` columns.
+  *Rationale:* a single legacy `status_catalog` column can't represent "front done,
+  back failed, metadata pending" simultaneously; per-stage tracking is required once
+  three independently-retryable AI calls exist per item.
+
+- **`overall_status` projection rule.** `overall_status` is a server-maintained
+  projection, not independently writable via normal `PATCH`. Derivation order:
+  (1) `review_status = approved` → `ready`; (2) `front_catalog_status = failed` →
+  `failed`; (3) `front_catalog_status = done` → `needs_review`, even if metadata
+  processing failed; (4) otherwise `pending`/`processing`.
+  *Rationale:* the front catalog image is the one artifact the gallery/item-detail
+  views actually require (SPEC §5.2/§5.3); a metadata-classification failure shouldn't
+  block review, so rule 3 explicitly outranks a failed `metadata_status`.
+
+- **Approval invariant.** An item cannot be approved (`review_status = approved`)
+  until `front_catalog_status = done`.
+  *Rationale:* approval implies the item is ready to display; approving an item with
+  no processed front image would produce a broken gallery card.
+
+- **`original_delete_at` — proposed and not approved.** Automatic deletion of
+  original uploads after a retention period was proposed for Phase 3 and rejected.
+  SPEC.md D2 (retain original uploads internally) stands unchanged; no deletion
+  timestamp column is added.
+  *Rationale:* originals remain useful for reprocessing/debugging/future features per
+  D2; no product requirement yet justifies the complexity/risk of automatic deletion.
